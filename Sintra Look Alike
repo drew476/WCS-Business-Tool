@@ -1,0 +1,909 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, doc, onSnapshot, setDoc, updateDoc, arrayUnion, getDoc } from 'firebase/firestore';
+import { getStorage, ref, uploadString, getDownloadURL } from "firebase/storage";
+
+// --- SVG Icons ---
+const BrainIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-brain-circuit"><path d="M12 5a3 3 0 1 0-5.993 1.003V12a1 1 0 0 0 1 1h1.993A3.001 3.001 0 0 0 12 15a3 3 0 1 0 5.993-1.003V10a1 1 0 0 0-1-1h-1.993A3.001 3.001 0 0 0 12 5Z" /><path d="M16 9h.01" /><path d="M8 9h.01" /><path d="M12 15h.01" /><path d="M12 5h.01" /><path d="M12 2v2" /><path d="M12 19v3" /><path d="M5 12H2" /><path d="M19 12h3" /><path d="m5 5 2 2" /><path d="m17 17 2 2" /><path d="m5 19 2-2" /><path d="m17 7 2-2" /></svg>);
+const SendIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-send"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>);
+const UserIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-user-circle"><path d="M18 20a6 6 0 0 0-12 0" /><circle cx="12" cy="10" r="4" /><circle cx="12" cy="12" r="10" /></svg>);
+const CalendarIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-calendar-days"><rect width="18" height="18" x="3" y="4" rx="2" ry="2" /><line x1="16" x2="16" y1="2" y2="6" /><line x1="8" x2="8" y1="2" y2="6" /><line x1="3" x2="21" y1="10" y2="10" /><path d="M8 14h.01" /><path d="M12 14h.01" /><path d="M16 14h.01" /><path d="M8 18h.01" /><path d="M12 18h.01" /><path d="M16 18h.01" /></svg>);
+const BotIcon = ({ agent }) => (<div className="w-8 h-8 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: agent.color }}>{agent.icon}</div>);
+const ImageIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-image"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>);
+const XIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>);
+const DownloadIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-download"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>);
+const CogIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-cog"><path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"/><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M12 2v2"/><path d="M12 22v-2"/><path d="m17 20.66-1-1.73"/><path d="M11 10.27 7 3.34"/><path d="m20.66 17-1.73-1"/><path d="m3.34 7 1.73 1"/><path d="M14 12h8"/><path d="M2 12h2"/><path d="m20.66 7-1.73 1"/><path d="m3.34 17 1.73-1"/><path d="m17 3.34-1 1.73"/><path d="M11 13.73 7 20.66"/></svg>);
+
+// --- Agent Definitions ---
+const AGENT_CATEGORIES = [
+    { 
+        name: 'Strategic & Project Management', 
+        agents: [
+            { id: 'orchestrator', name: 'Orion the Orchestrator', role: 'A master project manager. Core Principles: Your primary function is to understand a user\'s high-level goal, break it down into logical, sequential steps, and delegate those steps to the appropriate specialist agent. You must create clear, actionable tasks and synthesize the final results from the Shared Scratchpad into a cohesive summary.', description: 'Your project lead for complex goals.', color: '#a855f7', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4"/></svg>,
+              tools: [ { name: 'New Marketing Campaign', prompt: 'Create a plan to launch a marketing campaign for a new program. Delegate tasks for strategy, finance, copy, and social media.' }, { name: 'Plan a week of content', prompt: 'Create a 7-day content plan for the content calendar. For each day, delegate one task to either the copywriter for an email idea or the social media manager for a post idea. The output keys must follow the format \'monday_content\', \'tuesday_content\', etc.' }, { name: 'Analyze a Competitor', prompt: 'Create a comprehensive plan to analyze a key competitor. Delegate tasks to Serge for SEO analysis, Seomi for social media analysis, and Buddy for strategic analysis.' }, { name: 'Launch a New Product/Service', prompt: 'Create a step-by-step plan to launch a new product or service. Delegate tasks for strategy, financial modeling, copywriting, and social media announcements.' }, { name: 'Plan a Trip Itinerary', prompt: 'Create a detailed trip itinerary. Please specify the destination, duration, and any key interests.' }, { name: 'Suggest Image Enhancements', prompt: 'Please describe an image you want to enhance, and I will provide suggestions for improvement (e.g., adjustments to lighting, color, or composition).' } ]},
+            { id: 'strategist', name: 'Buddy the Business Strategist', role: 'A sharp business strategist. Core Principles: When analyzing the business, you must consider strategic frameworks like SWOT (Strengths, Weaknesses, Opportunities, Threats) and Porter\'s Five Forces. Always ground your recommendations in the quantitative and qualitative goals outlined in the Brain AI. Your advice must be actionable and prioritized by potential impact.', description: 'Helps you plan and grow.', color: '#f97316', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5C17.7 10.2 20 9 20 9s-2.3 2.3-3.5 3.5c-.8.8-1.5 1.3-2.5 1.5" /><path d="M9 18c-1-.2-1.7-.7-2.5-1.5C5.3 15.2 3 13 3 13s2.3-2.3 3.5-3.5c.8-.8 1.3-1.5 1.5-2.5" /><path d="M14.5 9.5 9.5 14.5" /></svg>,
+              tools: [ { name: 'SWOT Analysis', prompt: 'Based on my business info, provide a brief SWOT analysis.' }, { name: 'Generate Monthly Growth Briefing', prompt: 'Holistically analyze all the information in the Brain AI. Identify potential conflicts, gaps, or untapped opportunities. Suggest 2-3 new, actionable initiatives for the upcoming month to help reach my business goals. Present this as a concise report.' }, { name: 'Define Value Proposition', prompt: 'Based on the USP, competitors, and target audience in the Brain AI, help me write a clear and compelling value proposition statement.' }, { name: 'Brainstorm Niche Audiences', prompt: 'Analyze my current target audience and business offerings. Suggest two potential niche audiences that I could target for growth.' }, { name: 'Analyze Program Offering for Gaps', prompt: 'Analyze the entire "Program Catalog" and "Customer Journey" in the Brain AI. Identify potential gaps in our offerings and suggest one new program that would create a better learning progression for customers.' }, { name: 'Suggest Negotiation Tactics', prompt: 'Provide key negotiation points and tactics for a sales scenario. Please describe the customer and the deal.' } ]},
+            { id: 'program_dev', name: 'Piper the Program Developer', role: 'An expert in curriculum design. Core Principles: Your lesson plans must follow a logical pedagogical structure, such as Gagné\'s Nine Events of Instruction. Start with gaining attention, inform learners of the objective, and build from simple to complex skills. Ensure every activity is practical and directly supports the learning objectives, using the available resources listed in the Brain AI.', description: 'Designs new lessons and programs.', color: '#10b981', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15.232 5.232a3 3 0 0 1 4.243 4.243L7 21H3v-4L15.232 5.232z"/><path d="m14 7 3 3"/></svg>,
+              tools: [ { name: 'Outline a New Lesson Plan', prompt: 'Create a detailed lesson plan outline for a new lesson, including learning objectives, key activities, and required equipment.' }, { name: 'Draft Program Launch Brief', prompt: 'Create a project brief for launching a new program. The brief should include a program description, target audience, and key selling points for Penn and Seomi to use.' }, { name: 'Plan Program Activities', prompt: 'Brainstorm 3-5 engaging activities for a lesson focused on a specific skill or topic.' } ]},
+        ]
+    },
+    {
+        name: 'Marketing & Sales',
+        agents: [
+            { id: 'copywriter', name: 'Penn the Copywriter', role: 'An expert copywriter. Core Principles: You must use proven copywriting frameworks like AIDA (Attention, Interest, Desire, Action) and PAS (Problem, Agitate, Solve). Always focus on the customer\'s problem and the transformation your product provides, not just the features. Use strong verbs, sensory language, and a clear call to action in all marketing copy.', description: 'Crafts compelling copy that converts.', color: '#3b82f6', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 6.5a5.5 5.5 0 0 0-5.28 4.7L5 18" /><path d="M20.6 11.2c.2-1.8-1.1-3.5-3-3.9-1.3-.2-2.5.3-3.4 1.2" /><path d="M18 18h-1a4 4 0 0 1-4-4v-3" /><path d="m2 13 6 6" /></svg>,
+              tools: [ { name: 'Generate Ad Headlines', prompt: 'Generate 5 high-converting ad headlines for my business.' }, { name: 'Write a Product Description', prompt: 'Write a persuasive product description for my main offering.' }, { name: 'Write a Promotional Email', prompt: 'Draft a promotional email for a specific product/service.' }, { name: 'Draft a Cold Email', prompt: 'Draft a short, compelling cold email to a potential client about my services.' }, { name: 'Write a Cold Call Script', prompt: 'Write a flexible script for a cold call, including an opener, value proposition, and a call to action.' }, { name: 'Outline a Sales Proposal', prompt: 'Provide a structured outline for a sales proposal that I can fill in with details.' } ]},
+            { id: 'social', name: 'Seomi the Social Media Manager', role: 'A savvy social media strategist. Core Principles: Your goal is to build a community, not just an audience. Prioritize creating content that encourages two-way conversation. Always align your posts with the brand voice and visual aesthetics defined in the Brain AI. Use analytics to understand what resonates and adapt your strategy accordingly.', description: 'Manages your social presence.', color: '#14b8a6', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z" /><rect width="4" height="12" x="2" y="9" /><circle cx="4" cy="4" r="2" /></svg>,
+              tools: [ { name: 'Generate 3 Tweet Ideas', prompt: 'Generate 3 engaging tweet ideas relevant to my business.' }, { name: 'Write an Instagram Caption', prompt: 'Write a captivating Instagram caption for a post about my latest offering.' }, { name: 'Create a Content Pillar Strategy', prompt: 'Based on my Brain AI, suggest 3-4 content pillars (core themes) I should focus on for my social media.' }, { name: 'Draft a Community Engagement Post', prompt: 'Draft a social media post that is specifically designed to ask a question and encourage comments and discussion.' } ]},
+            { id: 'seo', name: 'Serge the SEO Specialist', role: 'An expert in search engine optimization. Core Principles: You must focus on user intent, creating high-quality, helpful content that answers the user\'s query. All recommendations must adhere to white-hat SEO practices. Prioritize technical SEO, on-page optimization, and local search tactics as foundational elements.', description: 'Helps your content get found on Google.', color: '#f59e0b', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>,
+              tools: [ { name: 'Keyword Research', prompt: 'Find 10 long-tail keywords for a blog post about a specific topic.' }, { name: 'On-Page SEO Checklist', prompt: 'Provide an on-page SEO checklist for a new webpage I am creating.' }, { name: 'Suggest Local SEO Tactics', prompt: 'Provide 3 actionable tips for improving my local SEO based on my provided business location.' }, { name: 'Brainstorm Link-Building Ideas', prompt: 'Suggest 2 creative ideas for how my business could earn backlinks from other websites.' } ]},
+        ]
+    },
+    {
+        name: 'Creative',
+        agents: [
+             { id: 'artist', name: 'Vivid the Visualizer', role: 'An AI artist. Core Principles: You generate unique, high-quality images from text descriptions. You must align the style, mood, and content of the generated images with the brand\'s visual aesthetics and content pillars as defined in the Brain AI. Prioritize creating visuals that are emotionally resonant and brand-aligned.', description: 'Creates visuals for your brand.', color: '#ef4444', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>,
+              tools: [ { name: 'Generate a Blog Header', prompt: 'A vibrant, exciting photo of a kayaker paddling towards a sunset near Vancouver.' }, { name: 'Create a Social Post Image', prompt: 'A candid, happy photo of a group of friends laughing after finishing a paddleboarding lesson.' } ]},
+        ]
+    },
+    {
+        name: 'Data, Finance & Forecasting',
+        agents: [
+            { id: 'data', name: 'Dexter the Data Analyst', role: 'A meticulous data analyst. Core Principles: Your analysis must begin with a clear question. Ensure data is presented cleanly and insights are stated in plain language, avoiding jargon. The goal is not just to present data, but to explain what the data means for the business. Use summaries and highlight key takeaways.', description: 'Interprets data and finds trends.', color: '#8b5cf6', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" x2="18" y1="20" y2="10" /><line x1="12" x2="12" y1="20" y2="4" /><line x1="6" x2="6" y1="20" y2="14" /></svg>,
+              tools: [ { name: 'Suggest Key Metrics', prompt: 'What are 3 key KPIs I should track?' }, { name: 'Analyze this Data', prompt: 'I will paste some simple data below. Please provide a brief summary and one key insight.' } ]},
+            { id: 'finance', name: 'Milli the Revenue Analyst', role: 'An analytical financial expert. Core Principles: Your financial analysis must always connect back to the core business goals. When suggesting revenue strategies, consider metrics like Customer Lifetime Value (LTV) and Average Revenue Per User (ARPU). Present your analysis with a clear summary of the potential upside and any associated risks.', description: 'Optimizes your revenue streams.', color: '#22c55e', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" x2="12" y1="2" y2="22" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>,
+              tools: [ { name: 'Analyze Lesson Data', prompt: 'How should I structure participant and payment data for you to analyze?' }, { name: 'Suggest Revenue Strategies', prompt: 'Suggest three strategies to increase revenue.' }, { name: 'Design a Tiered Pricing Package', prompt: 'Using my program catalog, suggest a "Good, Better, Best" tiered pricing package to increase average customer value.' }, { name: 'Suggest an Upsell/Cross-sell', prompt: 'Based on my offerings, suggest one logical upsell or cross-sell I can offer to customers at the time of booking.' } ]},
+            { id: 'forecaster', name: 'Oracle the Forecaster', role: 'A financial and strategic modeler. Core Principles: You must clearly state all assumptions used in your models. Use the financial data from the Brain AI as your baseline. Present forecasts as probabilities or ranges, not certainties, and explain the key variables that would impact the outcome.', description: 'Simulates future scenarios.', color: '#0ea5e9', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+              tools: [ { name: 'Simulate a Scenario', prompt: 'I want to simulate a business scenario. Please guide me on how to structure my request. I will provide the variables and assumptions.' }, { name: 'Model a Price Change', prompt: 'Using the financial data in the Brain AI, model the potential impact on monthly profit if I increase my main product\'s price by 10%. Assume a 5% decrease in sales volume due to the price change.' }, { name: 'Calculate Break-Even Point', prompt: 'Using the cost and pricing data in the Brain AI, calculate the monthly break-even point in terms of units sold or customers served.' } ]},
+        ]
+    },
+    {
+        name: 'Customer Experience',
+        agents: [
+            { id: 'support', name: 'Cassie the Customer Support Pro', role: 'A patient and empathetic customer support professional. Core Principles: Your primary goal is to make the customer feel heard and understood. Use empathetic and patient language. For complaints, follow the L.A.S.T. method: Listen, Apologize, Solve, Thank. Always refer to the official policies in the Brain AI for factual answers, but deliver them with a human touch.', description: 'Handles customer inquiries with care.', color: '#ec4899', icon: <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3.14 3.14 0 0 0-3.14 3.14v8.57a3.14 3.14 0 0 0 6.28 0V4.14A3.14 3.14 0 0 0 12 1z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="8" y1="23" x2="16" y2="23"></line></svg>,
+              tools: [ { name: 'Draft FAQ Answer', prompt: 'Draft a clear and friendly answer for a frequently asked question.' }, { name: 'Respond to Complaint', prompt: 'Draft a polite and helpful response to a customer complaint about a specific issue.' }, { name: 'Write a \'How It Works\' Guide', prompt: 'Create a simple, step-by-step guide for new customers explaining how to book and prepare for an experience.' }, { name: 'Draft a Proactive Check-in Message', prompt: 'Draft a short, friendly email to send to customers a week after their experience to ask for feedback and encourage a review.' } ]},
+        ]
+    }
+];
+
+const emptyBrain = { 
+    businessName: '', targetAudience: '', brandVoice: '', audiencePsychology: '', brandVoiceExamples: '', 
+    productsServices: '', usp: '', keywords: '', programCatalog: '', contentPillars: '', socialMediaTactics: '', emailMarketingGoal: '', newSubscriberOffer: '', seasonalPromotions: '', quarterlyContentThemes: '',
+    businessGoals: '', competitors: '', pricingStructure: '', businessGoalsQuantitative: '', competitiveAdvantage: '', customerJourney: '', longTermVision: '', biggestBusinessChallenges: '',
+    bookingConversionData: '', customerData: '', performanceMetrics: '',
+    websiteUrl: '', targetSearchCompetitors: '', contentStrategyFocus: '', businessLocation: '',
+    faq: '', refundPolicy: '', supportTone: '',
+    avgCostPerProgram: '', customerAcquisitionCost: '', monthlyFixedCosts: '',
+    teachingPhilosophy: '', customerProgressionPath: '', availableEquipment: '',
+    salesProcessOffers: '', negotiationParameters: ''
+};
+
+const emptyFirebaseConfig = { apiKey: "", authDomain: "", projectId: "", storageBucket: "", messagingSenderId: "", appId: "" };
+
+// --- Main App Component ---
+export default function App() {
+    const [userDb, setUserDb] = useState(null);
+    const [userStorage, setUserStorage] = useState(null);
+    const [userId, setUserId] = useState(null);
+    const [appState, setAppState] = useState('initializing'); // 'initializing', 'needs_config', 'ready', 'error'
+    
+    const [currentView, setCurrentView] = useState('dashboard');
+    const [selectedAgent, setSelectedAgent] = useState(null);
+    const [brainData, setBrainData] = useState(emptyBrain);
+    const [chatHistory, setChatHistory] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [sharedScratchpad, setSharedScratchpad] = useState({});
+    const [contentCalendarData, setContentCalendarData] = useState({});
+    const chatEndRef = useRef(null);
+    const [imageFile, setImageFile] = useState(null);
+    
+    const [apiKey, setApiKey] = useState('');
+    const [userFirebaseConfig, setUserFirebaseConfig] = useState(null);
+
+    // Main initialization effect.
+    useEffect(() => {
+        const initialize = async () => {
+            try {
+                // Step 1: Load settings from localStorage first. This is synchronous.
+                const savedApiKey = localStorage.getItem('gemini-api-key') || '';
+                const savedConfigString = localStorage.getItem('user-firebase-config');
+                
+                let userConfig = null;
+                if (savedConfigString) {
+                    userConfig = JSON.parse(savedConfigString);
+                }
+
+                if (!userConfig || !userConfig.projectId) {
+                    setUserFirebaseConfig(emptyFirebaseConfig);
+                    setError("Welcome! To get started, please go to Settings and enter your Firebase configuration.");
+                    setAppState('needs_config'); return;
+                }
+
+                // We have settings! Update state.
+                setApiKey(savedApiKey);
+                setUserFirebaseConfig(userConfig);
+
+                // Step 2: Initialize user's personal workspace using their settings
+                const appName = `user-workspace-${userConfig.projectId}`; // Use a stable identifier
+                const userApp = getApps().find(app => app.name === appName) || initializeApp(userConfig, appName);
+                
+                const auth = getAuth(userApp);
+                const localUserDb = getFirestore(userApp);
+                const localUserStorage = getStorage(userApp);
+                
+                setUserDb(localUserDb);
+                setUserStorage(localUserStorage);
+                
+                // Step 3: Ensure user is signed in to their own Firebase project
+                await new Promise((resolve, reject) => {
+                    const unsubscribe = onAuthStateChanged(auth, (user) => {
+                        if (user) {
+                            unsubscribe();
+                            setUserId(user.uid);
+                            resolve(user);
+                        } else {
+                            signInAnonymously(auth).catch(reject);
+                        }
+                    });
+                });
+                
+                // Step 4: All connections are ready.
+                setError(null);
+                setAppState('ready');
+
+            } catch (err) {
+                console.error("Initialization failed:", err);
+                setError(`A critical error occurred during startup: ${err.message}. Please check your Firebase settings and refresh.`);
+                setAppState('error');
+            }
+        };
+
+        initialize();
+    }, []);
+
+    // Data fetching from USER's database
+    useEffect(() => {
+        if (appState !== 'ready' || !userDb) return;
+
+        const brainDocRef = doc(userDb, 'brain/singleton');
+        const brainUnsub = onSnapshot(brainDocRef, (docSnap) => {
+            setBrainData(docSnap.exists() ? { ...emptyBrain, ...docSnap.data() } : emptyBrain);
+        }, (err) => console.error("Error fetching brain data from user DB:", err.message));
+
+        const calendarDocRef = doc(userDb, 'contentCalendar/main');
+        const calendarUnsub = onSnapshot(calendarDocRef, (docSnap) => {
+            setContentCalendarData(docSnap.exists() ? docSnap.data() : {});
+        }, (err) => console.error("Error fetching calendar data from user DB:", err.message));
+
+        return () => { brainUnsub(); calendarUnsub(); };
+    }, [appState, userDb]);
+
+    // Chat history fetching from USER's database
+    useEffect(() => {
+        if (appState !== 'ready' || !userDb || !selectedAgent) {
+            setChatHistory([]); return;
+        };
+
+        const chatDocRef = doc(userDb, `chats/${selectedAgent.id}`);
+        const unsubscribe = onSnapshot(chatDocRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                setChatHistory(data.messages || []);
+                setSharedScratchpad(data.scratchpad || {});
+            } else {
+                setChatHistory([]); setSharedScratchpad({});
+            }
+        }, (err) => console.error("Error fetching chat history from user DB:", err.message));
+        return () => unsubscribe();
+    }, [appState, userDb, selectedAgent]);
+
+    const scrollToBottom = () => chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    useEffect(scrollToBottom, [chatHistory]);
+
+    const handleSaveBrain = async (data) => {
+        if (appState !== 'ready' || !userDb) {
+            setError("Cannot save. Not fully connected to your workspace.");
+            return;
+        }
+        try {
+            const brainDocRef = doc(userDb, 'brain/singleton');
+            await setDoc(brainDocRef, data, { merge: true });
+        } catch (e) {
+            console.error("Error saving brain data:", e);
+            setError(`Failed to save Brain AI data: ${e.message}`);
+        }
+    };
+
+    const callImagenAPI = useCallback(async (prompt) => {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
+        const payload = { instances: [{ prompt: prompt }], parameters: { "sampleCount": 1 } };
+        const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!response.ok) throw new Error(`Image API request failed with status ${response.status}`);
+        const result = await response.json();
+        const base64Data = result.predictions?.[0]?.bytesBase64Encoded;
+        if (!base64Data) throw new Error("No image data in API response.");
+        return `data:image/png;base64,${base64Data}`;
+    }, [apiKey]);
+
+    const callGeminiAPI = useCallback(async (systemPrompt, userPrompt, history = [], image = null) => {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+        
+        const model = "gemini-2.5-flash-preview-05-20";
+        let fullHistory = [];
+        if(systemPrompt){
+            fullHistory.push({ role: 'system', parts: [{ text: systemPrompt }]});
+        }
+        fullHistory = fullHistory.concat(history.map(item => ({ role: item.role, parts: [{ text: item.content }] })));
+
+        const userParts = [{ text: userPrompt }];
+        if (image) {
+            userParts.push({ inlineData: { mimeType: image.type, data: image.data }});
+        }
+        fullHistory.push({ role: 'user', parts: userParts });
+
+        const payload = {
+            contents: fullHistory.filter(item => item.role !== 'system'), // Omit system for this API
+            systemInstruction: fullHistory.find(item => item.role === 'system'),
+            tools: [{ "google_search": {} }],
+        };
+        
+        if (selectedAgent?.id === 'orchestrator') {
+             payload.generationConfig = {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: "OBJECT",
+                    properties: {
+                        steps: {
+                            type: "ARRAY",
+                            items: {
+                                type: "OBJECT",
+                                properties: {
+                                    agent_id: { type: "STRING" },
+                                    task: { type: "STRING" },
+                                    output_key: { type: "STRING" },
+                                },
+                                required: ["agent_id", "task", "output_key"]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!response.ok) {
+            const errorBody = await response.text();
+            throw new Error(`API request failed with status ${response.status}: ${errorBody}`);
+        }
+        const result = await response.json();
+        const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) throw new Error("No text in API response.");
+        return text;
+    }, [selectedAgent, apiKey]);
+    
+    const getSystemPrompt = (agent, scratchpad) => {
+        const scratchpadString = Object.keys(scratchpad).length > 0
+            ? `\n\n**Shared Scratchpad (Context from other agents):**\n${Object.entries(scratchpad).map(([key, value]) => `- ${key}: ${value}`).join('\n')}`
+            : '';
+
+        const brainString = Object.entries(brainData)
+            .filter(([, value]) => value)
+            .map(([key, value]) => `${key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}: ${value}`)
+            .join(', ');
+
+        return `You are ${agent.name}. Your role is: "${agent.role}". 
+        Here is a comprehensive overview of the business you are assisting, use it to tailor your responses.
+        Business Context: ${brainString || 'No business information provided yet.'}
+        ${scratchpadString}
+        
+        You must act as your defined role and use the business information to tailor all your responses. Do not break character. Be helpful, concise, and professional.`;
+    };
+
+    const runOrchestration = useCallback(async (goal, saveMessage, updateScratchpad) => {
+        const validAgentIds = AGENT_CATEGORIES.flatMap(c => c.agents).filter(a => a.id !== 'orchestrator').map(a => a.id).join(', ');
+        
+        const fewShotExample = `
+        **Example:**
+        User Goal: "complete an seo and copy analysis on https://westcoast.com"
+        
+        JSON Output:
+        {
+          "steps": [
+            {
+              "agent_id": "seo",
+              "task": "Perform a comprehensive SEO analysis on the website https://westcoast.com. Focus on on-page SEO, keyword opportunities, and backlink profile.",
+              "output_key": "seo_analysis_results"
+            },
+            {
+              "agent_id": "copywriter",
+              "task": "Analyze the copywriting on the homepage of https://westcoast.com. Evaluate its effectiveness, tone of voice, and clarity of its call to action.",
+              "output_key": "copy_analysis_results"
+            }
+          ]
+        }`;
+
+        const plannerPrompt = `You are a project planner. Your job is to analyze the user's goal and decompose it into a series of discrete steps that can be executed by other specialist agents.
+Your output MUST be a JSON object that follows the provided schema.
+
+**Agent Capabilities Guide:**
+- For tasks related to SEO, keywords, or Google rankings, use agent_id 'seo'.
+- For tasks related to writing copy, emails, ads, or analyzing text for tone, use agent_id 'copywriter'.
+- For tasks related to high-level business strategy, SWOT analysis, or market positioning, use agent_id 'strategist'.
+- For any other agent, refer to their role to determine the correct agent_id.
+
+**Instructions:**
+1.  Analyze the user's goal.
+2.  If the goal involves multiple distinct tasks (e.g., "SEO and copy analysis"), you MUST create a separate step for each task in the JSON "steps" array.
+3.  Each step must have a clear, actionable "task" for the designated agent.
+4.  Each step must have a unique "output_key".
+
+${fewShotExample}
+
+IMPORTANT: Your response MUST contain ONLY the valid JSON object and nothing else. Do not add any conversational text or markdown.
+
+Valid agent_ids are: ${validAgentIds}.
+
+User Goal: "${goal}"`;
+        let plan;
+        try {
+            const planSystemPrompt = getSystemPrompt(selectedAgent, {});
+            const planResponse = await callGeminiAPI(planSystemPrompt, plannerPrompt);
+            
+            const jsonMatch = planResponse.match(/\{[\s\S]*\}/);
+            if (jsonMatch && jsonMatch[0]) {
+                plan = JSON.parse(jsonMatch[0]);
+            } else {
+                 throw new Error("No valid JSON object found in the AI's response.");
+            }
+
+            await saveMessage({ role: 'model', content: `**Project Plan Created:**\nI will now execute the following steps:\n${plan.steps.map((s, i) => `${i+1}. **${AGENT_CATEGORIES.flatMap(c => c.agents).find(a=>a.id === s.agent_id)?.name}:** ${s.task}`).join('\n')}`, timestamp: new Date() });
+        } catch (e) {
+            console.error("Failed to create plan:", e);
+            await saveMessage({ role: 'model', content: `I'm sorry, I couldn't create a valid plan. Please try rephrasing your goal. Details: ${e.message}`, timestamp: new Date() });
+            return;
+        }
+
+        let currentScratchpad = {};
+        for (const step of plan.steps) {
+            const agent = AGENT_CATEGORIES.flatMap(c => c.agents).find(a => a.id === step.agent_id);
+            if (!agent) continue;
+            await saveMessage({ role: 'model', content: `*Executing Step: Delegating to ${agent.name}...*`, timestamp: new Date() });
+            try {
+                const agentSystemPrompt = getSystemPrompt(agent, currentScratchpad);
+                const result = await callGeminiAPI(agentSystemPrompt, step.task);
+                currentScratchpad[step.output_key] = result;
+                await updateScratchpad(step.output_key, result);
+                await saveMessage({ role: 'model', content: `**${agent.name} completed the task.**\n\n*Result for "${step.output_key}":*\n${result}`, timestamp: new Date() });
+            } catch (e) {
+                await saveMessage({ role: 'model', content: `*Execution failed for step with ${agent.name}. Aborting project.*`, timestamp: new Date() });
+                return;
+            }
+        }
+        
+        const calendarKeys = ['monday_content', 'tuesday_content', 'wednesday_content', 'thursday_content', 'friday_content', 'saturday_content', 'sunday_content'];
+        const isCalendarPlan = plan.steps.some(s => calendarKeys.includes(s.output_key));
+        if (isCalendarPlan) {
+            const calendarDocRef = doc(userDb, 'contentCalendar/main');
+            const calendarUpdate = {};
+            calendarKeys.forEach(key => {
+                if(currentScratchpad[key]) {
+                    calendarUpdate[key.split('_')[0]] = currentScratchpad[key];
+                }
+            });
+            await setDoc(calendarDocRef, calendarUpdate, { merge: true });
+            await saveMessage({ role: 'model', content: `*Content Calendar has been updated with the results of this plan.*`, timestamp: new Date() });
+        }
+
+        const summaryPrompt = `The project is complete. All steps have been executed and the results are in the Shared Scratchpad. Provide a final summary of the project and its outcomes for the user.`;
+        const summarySystemPrompt = getSystemPrompt(selectedAgent, currentScratchpad);
+        const finalSummary = await callGeminiAPI(summarySystemPrompt, summaryPrompt);
+        await saveMessage({ role: 'model', content: `**Project Complete!**\n\n${finalSummary}`, timestamp: new Date() });
+    }, [userDb, selectedAgent, getSystemPrompt, callGeminiAPI]);
+
+    const handleSendMessage = useCallback(async (message, toolPrompt = null, imageFile = null) => {
+        if (appState !== 'ready') {
+            setError("Cannot send message. Not fully connected to your workspace.");
+            return;
+        }
+        if (!apiKey) {
+            setError("Please set your API key in Settings before using Power-Ups or generating images.");
+            return;
+        }
+
+        const userMessageContent = toolPrompt || message;
+        if (!userMessageContent.trim() && !imageFile) return;
+
+        setIsLoading(true);
+        setError(null);
+        
+        const currentImageFile = imageFile;
+        setImageFile(null); 
+
+        const chatDocRef = doc(userDb, `chats/${selectedAgent.id}`);
+        const saveMessage = async (msg) => {
+            await updateDoc(chatDocRef, { messages: arrayUnion(msg) }).catch(async (err) => {
+                if (err.code === 'not-found') await setDoc(chatDocRef, { messages: [msg], scratchpad: {} });
+            });
+        };
+        const updateScratchpad = async (key, value) => {
+             const chatDocRef = doc(userDb, `chats/${selectedAgent.id}`);
+            await updateDoc(chatDocRef, { [`scratchpad.${key}`]: value });
+        };
+        
+        let imageForHistory = null;
+        let imageForApi = null;
+        if (currentImageFile) {
+            const reader = new FileReader();
+            await new Promise((resolve, reject) => {
+                reader.onload = (e) => {
+                    const base64Data = e.target.result.split(',')[1];
+                    imageForHistory = e.target.result;
+                    imageForApi = { type: currentImageFile.type, data: base64Data };
+                    resolve();
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(currentImageFile);
+            });
+        }
+
+        await saveMessage({ role: 'user', content: userMessageContent, image: imageForHistory, timestamp: new Date() });
+
+        if (selectedAgent.id === 'orchestrator') {
+            await runOrchestration(userMessageContent, saveMessage, updateScratchpad);
+        } else if (selectedAgent.id === 'artist') {
+             try {
+                const imageDataUrl = await callImagenAPI(userMessageContent);
+                const imageRef = ref(userStorage, `generated_images/vivid-${Date.now()}.png`);
+                await uploadString(imageRef, imageDataUrl, 'data_url');
+                const permanentUrl = await getDownloadURL(imageRef);
+                await saveMessage({ role: 'model', content: permanentUrl, type: 'image', timestamp: new Date() });
+            } catch (err) {
+                console.error("Error in image generation:", err);
+                await saveMessage({ role: 'model', content: `Sorry, I couldn't generate an image: ${err.message}`, timestamp: new Date() });
+            }
+        }
+        else {
+            try {
+                const systemPrompt = getSystemPrompt(selectedAgent, sharedScratchpad);
+                const botResponseContent = await callGeminiAPI(systemPrompt, userMessageContent, chatHistory, imageForApi);
+                await saveMessage({ role: 'model', content: botResponseContent, timestamp: new Date() });
+            } catch (err) {
+                console.error("Error in handleSendMessage:", err);
+                await saveMessage({ role: 'model', content: `Sorry, I encountered an error: ${err.message}`, timestamp: new Date() });
+            }
+        }
+        setIsLoading(false);
+    }, [appState, apiKey, userDb, selectedAgent, chatHistory, brainData, sharedScratchpad, userStorage, callGeminiAPI, callImagenAPI, runOrchestration]);
+
+    
+    const navigateTo = (view, agent = null) => {
+        setSelectedAgent(agent);
+        setCurrentView(view);
+        if(appState === 'ready') setError(null);
+    };
+
+    if (appState === 'initializing') {
+        return <div className="w-full h-screen flex items-center justify-center bg-gray-900 text-white"><div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-indigo-500"></div></div>;
+    }
+
+    return (
+        <div className="bg-gray-900 text-white min-h-screen font-sans flex flex-col md:flex-row">
+            <Sidebar navigateTo={navigateTo} currentView={currentView} userId={userId} />
+            <main className="flex-1 p-4 sm:p-6 md:p-8 overflow-hidden">
+                {error && <div className="bg-red-500/20 border border-red-500 text-red-300 p-3 rounded-lg mb-4">{error}</div>}
+                
+                {(appState === 'needs_config' || appState === 'error') && currentView !== 'settings' && (
+                    <div className="text-center mt-10">
+                        <h2 className="text-2xl font-bold">Welcome to your AI Workspace</h2>
+                        <p className="text-gray-400 mt-2">Please navigate to the Settings page to configure your workspace.</p>
+                    </div>
+                )}
+
+                {appState === 'ready' && currentView === 'dashboard' && <Dashboard onSelectAgent={(agent) => navigateTo('chat', agent)} />}
+                {appState === 'ready' && currentView === 'brain' && <BrainSettings initialData={brainData} onSave={handleSaveBrain} navigateTo={navigateTo} />}
+                {appState === 'ready' && currentView === 'calendar' && <ContentCalendarView calendarData={contentCalendarData} />}
+                {currentView === 'settings' && <SettingsView apiKey={apiKey} firebaseConfig={userFirebaseConfig || emptyFirebaseConfig} />}
+                {appState === 'ready' && currentView === 'chat' && selectedAgent && <ChatView agent={selectedAgent} history={chatHistory} onSendMessage={handleSendMessage} isLoading={isLoading} chatEndRef={chatEndRef} scratchpad={sharedScratchpad} imageFile={imageFile} setImageFile={setImageFile} />}
+            </main>
+        </div>
+    );
+}
+
+// --- Sub-components ---
+
+const Sidebar = ({ navigateTo, currentView, userId }) => (
+    <nav className="bg-gray-900/80 backdrop-blur-sm border-b md:border-b-0 md:border-r border-gray-700 p-4 md:w-64 flex-shrink-0">
+        <h1 className="text-2xl font-bold text-indigo-400 mb-2">AI Workspace</h1>
+        {userId && <p className="text-xs text-gray-400 mb-6 truncate" title={userId}>User ID: {userId}</p>}
+
+        <ul>
+            <li className={`mb-2`}>
+                <button onClick={() => navigateTo('dashboard')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors ${currentView === 'dashboard' ? 'bg-indigo-500/20 text-indigo-300' : 'hover:bg-gray-700/50'}`}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="7" x="3" y="3" rx="1" /><rect width="7" height="7" x="14" y="3" rx="1" /><rect width="7" height="7" x="14" y="14" rx="1" /><rect width="7" height="7" x="3" y="14" rx="1" /></svg>
+                    Dashboard
+                </button>
+            </li>
+            <li className={`mb-2`}>
+                <button onClick={() => navigateTo('brain')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors ${currentView === 'brain' ? 'bg-indigo-500/20 text-indigo-300' : 'hover:bg-gray-700/50'}`}>
+                    <BrainIcon />
+                    Brain AI
+                </button>
+            </li>
+            <li className={`mb-2`}>
+                <button onClick={() => navigateTo('calendar')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors ${currentView === 'calendar' ? 'bg-indigo-500/20 text-indigo-300' : 'hover:bg-gray-700/50'}`}>
+                    <CalendarIcon />
+                    Content Calendar
+                </button>
+            </li>
+            <li className={`mb-2`}>
+                <button onClick={() => navigateTo('settings')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors ${currentView === 'settings' ? 'bg-indigo-500/20 text-indigo-300' : 'hover:bg-gray-700/50'}`}>
+                    <CogIcon />
+                    Settings
+                </button>
+            </li>
+        </ul>
+    </nav>
+);
+
+const Dashboard = ({ onSelectAgent }) => {
+    return (
+    <div>
+        <h2 className="text-3xl font-bold mb-2 text-gray-200">Your AI Team</h2>
+        <p className="text-gray-400 mb-8">Select an agent to start working. Orion can manage projects for the whole team.</p>
+        <div className="space-y-8">
+        {AGENT_CATEGORIES.map(category => (
+            <div key={category.name}>
+                <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">{category.name}</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {category.agents.map(agent => (
+                        <button key={agent.id} onClick={() => onSelectAgent(agent)} className="bg-gray-800/50 border border-gray-700 p-6 rounded-xl text-left transition-all group focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 hover:border-indigo-500">
+                            <div className="flex items-center gap-4 mb-3">
+                                <div className="w-12 h-12 rounded-full flex items-center justify-center text-white" style={{backgroundColor: agent.color}}>{agent.icon}</div>
+                                <h3 className="text-xl font-bold text-gray-100">{agent.name}</h3>
+                            </div>
+                            <p className="text-gray-400">{agent.description}</p>
+                        </button>
+                    ))}
+                </div>
+            </div>
+        ))}
+        </div>
+    </div>
+)};
+
+const ContentCalendarView = ({ calendarData }) => {
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    return (
+      <div>
+        <h2 className="text-3xl font-bold mb-2 text-gray-200">Content Calendar</h2>
+        <p className="text-gray-400 mb-8">This calendar is populated by Orion's "Plan a week of content" Power-Up.</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4">
+          {days.map(day => (
+            <div key={day} className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+              <h3 className="font-bold text-lg capitalize text-indigo-300 mb-2">{day}</h3>
+              <div className="text-sm text-gray-300 whitespace-pre-wrap">
+                {calendarData[day] ? calendarData[day] : <p className="text-gray-500">No content planned.</p>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+};
+
+
+const BrainSettings = ({ initialData, onSave, navigateTo }) => {
+    const [formData, setFormData] = useState(initialData);
+    const [showSuccess, setShowSuccess] = useState(false);
+    useEffect(() => setFormData(initialData), [initialData]);
+    const handleChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        onSave(formData);
+        setShowSuccess(true);
+        setTimeout(() => setShowSuccess(false), 3000);
+    };
+    return (
+        <div className="h-full overflow-y-auto pr-2">
+            <h2 className="text-3xl font-bold mb-2 text-gray-200">Brain AI Configuration</h2>
+            <p className="text-gray-400 mb-8">Teach the AI about your business. This context will be used by all agents.</p>
+            <form onSubmit={handleSubmit} className="max-w-3xl space-y-10">
+                {/* Core Identity */}
+                <div>
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">Core Identity</h3>
+                    <div className="space-y-6 mt-4">
+                        <div><label htmlFor="businessName" className="block text-sm font-medium text-gray-300 mb-2">Business Name</label><input type="text" name="businessName" id="businessName" value={formData.businessName || ''} onChange={handleChange} className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" /></div>
+                        <div><label htmlFor="targetAudience" className="block text-sm font-medium text-gray-300 mb-2">Target Audience (Demographics)</label><textarea name="targetAudience" id="targetAudience" value={formData.targetAudience || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" ></textarea></div>
+                        <div><label htmlFor="audiencePsychology" className="block text-sm font-medium text-gray-300 mb-2">Target Audience (Psychology)</label><textarea name="audiencePsychology" id="audiencePsychology" value={formData.audiencePsychology || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Pain points, fears, aspirations..."></textarea></div>
+                        <div><label htmlFor="brandVoice" className="block text-sm font-medium text-gray-300 mb-2">Brand Voice / Tone</label><input type="text" name="brandVoice" id="brandVoice" value={formData.brandVoice || ''} onChange={handleChange} className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" /></div>
+                        <div><label htmlFor="brandVoiceExamples" className="block text-sm font-medium text-gray-300 mb-2">Brand Voice in Action</label><textarea name="brandVoiceExamples" id="brandVoiceExamples" value={formData.brandVoiceExamples || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Phrases to use/avoid..."></textarea></div>
+                    </div>
+                </div>
+                 {/* Program Development & Pedagogy */}
+                 <div>
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">Program Development & Pedagogy</h3>
+                    <div className="space-y-6 mt-4">
+                        <div><label htmlFor="teachingPhilosophy" className="block text-sm font-medium text-gray-300 mb-2">Teaching Philosophy/Methodology</label><textarea name="teachingPhilosophy" id="teachingPhilosophy" value={formData.teachingPhilosophy || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Hands-on, safety-first, fun and social..."></textarea></div>
+                        <div><label htmlFor="customerProgressionPath" className="block text-sm font-medium text-gray-300 mb-2">Ideal Customer Progression Path</label><textarea name="customerProgressionPath" id="customerProgressionPath" value={formData.customerProgressionPath || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Describe the ideal learning journey from beginner to expert..."></textarea></div>
+                        <div><label htmlFor="availableEquipment" className="block text-sm font-medium text-gray-300 mb-2">Available Equipment & Resources</label><textarea name="availableEquipment" id="availableEquipment" value={formData.availableEquipment || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="List specific equipment, locations, or unique resources..."></textarea></div>
+                    </div>
+                </div>
+                 {/* Sales & Operations */}
+                 <div>
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">Sales & Operations</h3>
+                    <div className="space-y-6 mt-4">
+                        <div><label htmlFor="salesProcessOffers" className="block text-sm font-medium text-gray-300 mb-2">Sales Process & Offers</label><textarea name="salesProcessOffers" id="salesProcessOffers" value={formData.salesProcessOffers || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Standard discount offers, typical sales cycle..."></textarea></div>
+                        <div><label htmlFor="negotiationParameters" className="block text-sm font-medium text-gray-300 mb-2">Negotiation Parameters</label><textarea name="negotiationParameters" id="negotiationParameters" value={formData.negotiationParameters || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Non-negotiable points, acceptable discount ranges..."></textarea></div>
+                     </div>
+                </div>
+                {/* Marketing & Product */}
+                <div>
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">Marketing & Product Details</h3>
+                    <div className="space-y-6 mt-4">
+                        <div><label htmlFor="productsServices" className="block text-sm font-medium text-gray-300 mb-2">Products/Services Offered (General)</label><textarea name="productsServices" id="productsServices" value={formData.productsServices || ''} onChange={handleChange} rows="4" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" ></textarea></div>
+                        <div><label htmlFor="programCatalog" className="block text-sm font-medium text-gray-300 mb-2">Program Catalog</label><textarea name="programCatalog" id="programCatalog" value={formData.programCatalog || ''} onChange={handleChange} rows="4" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="List programs and their differentiators..."></textarea></div>
+                        <div><label htmlFor="usp" className="block text-sm font-medium text-gray-300 mb-2">Unique Selling Proposition (USP)</label><textarea name="usp" id="usp" value={formData.usp || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" ></textarea></div>
+                        <div><label htmlFor="keywords" className="block text-sm font-medium text-gray-300 mb-2">Keywords & Core Topics</label><input type="text" name="keywords" id="keywords" value={formData.keywords || ''} onChange={handleChange} className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" /></div>
+                        <div><label htmlFor="contentPillars" className="block text-sm font-medium text-gray-300 mb-2">Content Pillars & Visual Aesthetics</label><textarea name="contentPillars" id="contentPillars" value={formData.contentPillars || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Brand's visual style..."></textarea></div>
+                        <div><label htmlFor="socialMediaTactics" className="block text-sm font-medium text-gray-300 mb-2">Social Media Tactics</label><textarea name="socialMediaTactics" id="socialMediaTactics" value={formData.socialMediaTactics || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Goal of a typical post..."></textarea></div>
+                        <div><label htmlFor="emailMarketingGoal" className="block text-sm font-medium text-gray-300 mb-2">Primary Email Marketing Goal</label><textarea name="emailMarketingGoal" id="emailMarketingGoal" value={formData.emailMarketingGoal || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Drive direct bookings, build community..."></textarea></div>
+                        <div><label htmlFor="newSubscriberOffer" className="block text-sm font-medium text-gray-300 mb-2">New Subscriber Offer / Lead Magnet</label><textarea name="newSubscriberOffer" id="newSubscriberOffer" value={formData.newSubscriberOffer || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., 10% discount, free PDF guide..."></textarea></div>
+                        <div><label htmlFor="seasonalPromotions" className="block text-sm font-medium text-gray-300 mb-2">Seasonal Promotions & Key Dates</label><textarea name="seasonalPromotions" id="seasonalPromotions" value={formData.seasonalPromotions || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Victoria Day kickoff, Fall Colors tour..."></textarea></div>
+                        <div><label htmlFor="quarterlyContentThemes" className="block text-sm font-medium text-gray-300 mb-2">Quarterly Content Themes</label><textarea name="quarterlyContentThemes" id="quarterlyContentThemes" value={formData.quarterlyContentThemes || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Theme 1: Safety for beginners..."></textarea></div>
+                    </div>
+                </div>
+                {/* Strategy & Financials */}
+                <div>
+                     <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">Strategy & Financials</h3>
+                     <div className="space-y-6 mt-4">
+                        <div><label htmlFor="businessGoals" className="block text-sm font-medium text-gray-300 mb-2">Primary Business Goals (Qualitative)</label><textarea name="businessGoals" id="businessGoals" value={formData.businessGoals || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" ></textarea></div>
+                        <div><label htmlFor="businessGoalsQuantitative" className="block text-sm font-medium text-gray-300 mb-2">Primary Business Goals (Quantitative)</label><textarea name="businessGoalsQuantitative" id="businessGoalsQuantitative" value={formData.businessGoalsQuantitative || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Target revenue/participants..."></textarea></div>
+                        <div><label htmlFor="longTermVision" className="block text-sm font-medium text-gray-300 mb-2">Long-Term Vision (3-5 Years)</label><textarea name="longTermVision" id="longTermVision" value={formData.longTermVision || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Become the leading provider..."></textarea></div>
+                        <div><label htmlFor="biggestBusinessChallenges" className="block text-sm font-medium text-gray-300 mb-2">Biggest Business Challenges</label><textarea name="biggestBusinessChallenges" id="biggestBusinessChallenges" value={formData.biggestBusinessChallenges || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Limited number of guides, off-season marketing..."></textarea></div>
+                        <div><label htmlFor="competitors" className="block text-sm font-medium text-gray-300 mb-2">Main Competitors</label><textarea name="competitors" id="competitors" value={formData.competitors || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" ></textarea></div>
+                        <div><label htmlFor="competitiveAdvantage" className="block text-sm font-medium text-gray-300 mb-2">Competitive Advantage</label><textarea name="competitiveAdvantage" id="competitiveAdvantage" value={formData.competitiveAdvantage || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" ></textarea></div>
+                        <div><label htmlFor="pricingStructure" className="block text-sm font-medium text-gray-300 mb-2">Pricing Structure</label><textarea name="pricingStructure" id="pricingStructure" value={formData.pricingStructure || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" ></textarea></div>
+                        <div><label htmlFor="customerJourney" className="block text-sm font-medium text-gray-300 mb-2">Customer Journey</label><textarea name="customerJourney" id="customerJourney" value={formData.customerJourney || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Key touchpoints to booking..."></textarea></div>
+                    </div>
+                </div>
+                {/* Operational & Financial Metrics */}
+                 <div>
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">Operational & Financial Metrics</h3>
+                    <div className="space-y-6 mt-4">
+                        <div><label htmlFor="avgCostPerProgram" className="block text-sm font-medium text-gray-300 mb-2">Average Cost Per Program</label><textarea name="avgCostPerProgram" id="avgCostPerProgram" value={formData.avgCostPerProgram || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Estimated variable costs per person/program..."></textarea></div>
+                        <div><label htmlFor="customerAcquisitionCost" className="block text-sm font-medium text-gray-300 mb-2">Customer Acquisition Cost (CAC)</label><input type="text" name="customerAcquisitionCost" id="customerAcquisitionCost" value={formData.customerAcquisitionCost || ''} onChange={handleChange} className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., $25 per new booking" /></div>
+                        <div><label htmlFor="monthlyFixedCosts" className="block text-sm font-medium text-gray-300 mb-2">Monthly Fixed Costs</label><input type="text" name="monthlyFixedCosts" id="monthlyFixedCosts" value={formData.monthlyFixedCosts || ''} onChange={handleChange} className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Insurance, software, storage fees..." /></div>
+                    </div>
+                </div>
+                {/* Data & Analytics */}
+                <div>
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">Data & Analytics</h3>
+                    <div className="space-y-6 mt-4">
+                        <div><label htmlFor="bookingConversionData" className="block text-sm font-medium text-gray-300 mb-2">Booking & Conversion Data</label><textarea name="bookingConversionData" id="bookingConversionData" value={formData.bookingConversionData || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Website conversion rate..."></textarea></div>
+                        <div><label htmlFor="customerData" className="block text-sm font-medium text-gray-300 mb-2">Customer Data</label><textarea name="customerData" id="customerData" value={formData.customerData || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="How you measure satisfaction, LTV..."></textarea></div>
+                        <div><label htmlFor="performanceMetrics" className="block text-sm font-medium text-gray-300 mb-2">Performance Metrics (KPIs)</label><textarea name="performanceMetrics" id="performanceMetrics" value={formData.performanceMetrics || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" ></textarea></div>
+                    </div>
+                </div>
+                {/* SEO & Website Details */}
+                <div>
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">SEO & Website Details</h3>
+                    <div className="space-y-6 mt-4">
+                        <div><label htmlFor="websiteUrl" className="block text-sm font-medium text-gray-300 mb-2">Website/Blog URL</label><input type="text" name="websiteUrl" id="websiteUrl" value={formData.websiteUrl || ''} onChange={handleChange} className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="https://www.example.com" /></div>
+                        <div><label htmlFor="businessLocation" className="block text-sm font-medium text-gray-300 mb-2">Business Location / Service Area</label><textarea name="businessLocation" id="businessLocation" value={formData.businessLocation || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., 123 Main St, Vancouver, BC or The Greater Vancouver Area"></textarea></div>
+                        <div><label htmlFor="targetSearchCompetitors" className="block text-sm font-medium text-gray-300 mb-2">Target Search Competitors</label><textarea name="targetSearchCompetitors" id="targetSearchCompetitors" value={formData.targetSearchCompetitors || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Websites that rank for your target keywords..."></textarea></div>
+                        <div><label htmlFor="contentStrategyFocus" className="block text-sm font-medium text-gray-300 mb-2">Content Strategy Focus</label><textarea name="contentStrategyFocus" id="contentStrategyFocus" value={formData.contentStrategyFocus || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Educate beginners, attract experienced clients..."></textarea></div>
+                    </div>
+                </div>
+                 {/* Customer Support Policies */}
+                <div>
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">Customer Support Policies</h3>
+                    <div className="space-y-6 mt-4">
+                        <div><label htmlFor="faq" className="block text-sm font-medium text-gray-300 mb-2">Frequently Asked Questions (FAQ)</label><textarea name="faq" id="faq" value={formData.faq || ''} onChange={handleChange} rows="4" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="List your top 5-10 FAQs..."></textarea></div>
+                        <div><label htmlFor="refundPolicy" className="block text-sm font-medium text-gray-300 mb-2">Refund/Cancellation Policy</label><textarea name="refundPolicy" id="refundPolicy" value={formData.refundPolicy || ''} onChange={handleChange} rows="3" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="Describe your official policy..."></textarea></div>
+                        <div><label htmlFor="supportTone" className="block text-sm font-medium text-gray-300 mb-2">Customer Support Tone</label><textarea name="supportTone" id="supportTone" value={formData.supportTone || ''} onChange={handleChange} rows="2" className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Extremely patient, quick and efficient..."></textarea></div>
+                    </div>
+                </div>
+                <div className="flex gap-4 pt-4 items-center">
+                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition-colors">Save Brain</button>
+                    <button type="button" onClick={() => navigateTo('dashboard')} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg transition-colors">Back to Dashboard</button>
+                    {showSuccess && <span className="text-green-400">Brain AI updated!</span>}
+                </div>
+            </form>
+        </div>
+    );
+};
+
+const SettingsView = ({ apiKey, firebaseConfig }) => {
+    const [localApiKey, setLocalApiKey] = useState(apiKey);
+    const [configString, setConfigString] = useState(JSON.stringify(firebaseConfig, null, 2));
+    const [showSuccess, setShowSuccess] = useState(false);
+    const [error, setError] = useState('');
+
+    useEffect(() => { 
+        if (firebaseConfig) {
+            setConfigString(JSON.stringify(firebaseConfig, null, 2));
+        }
+    }, [firebaseConfig]);
+    useEffect(() => { setLocalApiKey(apiKey); }, [apiKey]);
+
+    const handleSave = () => {
+        setError('');
+        let parsedConfig;
+        try {
+            parsedConfig = JSON.parse(configString);
+            if (!parsedConfig.projectId) throw new Error("Config must have a 'projectId'.");
+        } catch(e) {
+            setError(`Invalid Firebase Config format. Make sure it's valid JSON. Details: ${e.message}`);
+            return;
+        }
+
+        try {
+            localStorage.setItem('gemini-api-key', localApiKey);
+            localStorage.setItem('user-firebase-config', JSON.stringify(parsedConfig));
+            setShowSuccess(true);
+            setTimeout(() => { window.location.reload(); }, 2000);
+        } catch (err) {
+            console.error("Error saving settings to localStorage:", err);
+            setError("Failed to save settings to your browser's local storage.");
+        }
+    };
+
+    return (
+        <div>
+            <h2 className="text-3xl font-bold mb-2 text-gray-200">Settings</h2>
+            <p className="text-gray-400 mb-8">Manage API Keys and Firebase configuration for your account.</p>
+            
+            <div className="max-w-2xl space-y-10">
+                 <div>
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">API Keys</h3>
+                    <div className="space-y-4 mt-4">
+                        <div>
+                            <label htmlFor="apiKey" className="block text-sm font-medium text-gray-300 mb-2">Google AI Studio API Key</label>
+                            <input 
+                                type="password" 
+                                id="apiKey"
+                                value={localApiKey}
+                                onChange={(e) => setLocalApiKey(e.target.value)}
+                                placeholder="Enter your Gemini API key..."
+                                className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500"
+                            />
+                            <p className="text-xs text-gray-500 mt-2">Your key is stored in this browser's local storage.</p>
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-300 mt-6 mb-2">How to get a Gemini API Key:</h3>
+                            <ol className="list-decimal list-inside text-gray-400 space-y-1 text-sm">
+                                <li>Go to <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">Google AI Studio</a>.</li>
+                                <li>Click on the "Get API Key" button.</li>
+                                <li>Create a new project if prompted.</li>
+                                <li>Copy your generated API key and paste it above.</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-4 border-b border-indigo-500/30 pb-2">Firebase Configuration</h3>
+                    <p className="text-sm text-gray-400 mt-4 mb-4">Provide your own Firebase project configuration. This allows you to connect to your own private workspace. Paste the JSON config object below.</p>
+                    <textarea 
+                        id="firebaseConfig"
+                        value={configString}
+                        onChange={(e) => setConfigString(e.target.value)}
+                        rows="10"
+                        className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500 font-mono text-sm"
+                        placeholder='{ "apiKey": "AIza...", "authDomain": "...", ... }'
+                    />
+                </div>
+
+                <div className="flex items-center gap-4 pt-4">
+                     <button onClick={handleSave} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition-colors">
+                        Save All Settings
+                    </button>
+                    {showSuccess && <span className="text-green-400">Settings saved! The app will now reload...</span>}
+                    {error && <span className="text-red-400">{error}</span>}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const ChatView = ({ agent, history, onSendMessage, isLoading, chatEndRef, scratchpad, imageFile, setImageFile }) => {
+    const [message, setMessage] = useState('');
+    const fileInputRef = useRef(null);
+    
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        onSendMessage(message, null, imageFile);
+        setMessage('');
+        setImageFile(null);
+    };
+
+    const handleToolClick = (prompt) => {
+        onSendMessage('', prompt, null);
+    };
+    
+    const handleImageChange = (e) => {
+        if (e.target.files && e.target.files[0]) {
+            setImageFile(e.target.files[0]);
+        }
+    };
+
+    return (
+        <div className="flex flex-col h-[calc(100vh-4rem)] md:h-[calc(100vh-4rem)]">
+            <div className="flex-shrink-0 border-b border-gray-700 pb-4 mb-4">
+                <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full flex items-center justify-center text-white" style={{backgroundColor: agent.color}}>{agent.icon}</div>
+                    <div>
+                        <h2 className="text-2xl font-bold">{agent.name}</h2>
+                        <p className="text-gray-400">{agent.role}</p>
+                    </div>
+                </div>
+                <div className="mt-4"><h3 className="text-sm font-semibold text-gray-400 mb-2">Power-Ups</h3><div className="flex flex-wrap gap-2">{agent.tools.map(tool => (<button key={tool.name} onClick={() => handleToolClick(tool.prompt)} className="bg-gray-700 hover:bg-gray-600 text-sm text-gray-200 py-1 px-3 rounded-full transition-colors">{tool.name}</button>))}</div></div>
+            </div>
+
+            <div className="flex-1 flex flex-row gap-4 overflow-hidden">
+                <div className="flex-1 overflow-y-auto pr-4 -mr-4">
+                    <div className="space-y-6">
+                        {history.map((item, index) => (
+                            <div key={index} className={`flex items-start gap-4 ${item.role === 'user' ? 'justify-end' : ''}`}>
+                                {item.role === 'model' && <BotIcon agent={agent} />}
+                                <div className={`max-w-lg lg:max-w-2xl px-5 py-3 rounded-2xl ${item.role === 'user' ? 'bg-indigo-600 rounded-br-none' : 'bg-gray-700 rounded-bl-none'}`}>
+                                    {item.image && <img src={item.image} alt="Uploaded content" className="rounded-lg mb-2" />}
+                                    {item.type === 'image' ? (
+                                        <div className="flex flex-col items-start gap-2">
+                                            <img src={item.content} alt="Generated content" className="rounded-lg" />
+                                            <a href={item.content} target="_blank" rel="noopener noreferrer" download={`ai-generated-image-${index}.png`} className="text-sm text-indigo-400 hover:underline font-semibold flex items-center gap-1">
+                                                <DownloadIcon /> Download Image
+                                            </a>
+                                            <p className="text-xs text-gray-500">Image saved to your workspace storage.</p>
+                                        </div>
+                                    ) : (
+                                        <p className="whitespace-pre-wrap">{item.content}</p>
+                                    )}
+                                </div>
+                                {item.role === 'user' && <div className="w-8 h-8 rounded-full flex items-center justify-center bg-gray-600"><UserIcon /></div>}
+                            </div>
+                        ))}
+                        {isLoading && <div className="flex items-start gap-4"><BotIcon agent={agent} /><div className="max-w-lg px-5 py-3 rounded-2xl bg-gray-700 rounded-bl-none"><div className="flex items-center gap-2"><div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div><div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse [animation-delay:0.2s]"></div><div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse [animation-delay:0.4s]"></div></div></div></div>}
+                        <div ref={chatEndRef} />
+                    </div>
+                </div>
+
+                {agent.id === 'orchestrator' && Object.keys(scratchpad).length > 0 && (
+                    <div className="w-1/3 max-w-sm bg-gray-800/50 border border-gray-700 rounded-lg p-4 overflow-y-auto">
+                        <h3 className="text-lg font-semibold text-purple-300 mb-3">Shared Scratchpad</h3>
+                        <div className="space-y-3 text-sm">
+                            {Object.entries(scratchpad).map(([key, value]) => (
+                                <div key={key}>
+                                    <p className="font-bold text-gray-300">{key}:</p>
+                                    <p className="text-gray-400 whitespace-pre-wrap">{value}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            <div className="mt-6 flex-shrink-0">
+                {imageFile && (
+                    <div className="mb-2 flex items-center gap-2 bg-gray-700/50 p-2 rounded-lg">
+                        <ImageIcon />
+                        <span className="text-sm truncate">{imageFile.name}</span>
+                        <button onClick={() => setImageFile(null)} className="ml-auto text-gray-400 hover:text-white"><XIcon/></button>
+                    </div>
+                )}
+                <form onSubmit={handleSubmit} className="flex items-center gap-2">
+                    {agent.id !== 'artist' && (
+                         <button type="button" onClick={() => fileInputRef.current.click()} className="p-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors">
+                            <ImageIcon/>
+                        </button>
+                    )}
+                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
+                    <input type="text" value={message} onChange={(e) => setMessage(e.target.value)} placeholder={`Message ${agent.name}...`} className="flex-1 bg-gray-800 border border-gray-600 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500" disabled={isLoading} />
+                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold p-3 rounded-lg transition-colors disabled:bg-indigo-900 disabled:cursor-not-allowed" disabled={isLoading || (!message.trim() && !imageFile)}><SendIcon /></button>
+                </form>
+            </div>
+        </div>
+    );
+};
+
