@@ -381,23 +381,24 @@ export default function App() {
         
         const fewShotExample = `...`; // (same as your original example)
 
-        const plannerPrompt = `...`; // (same as your original plannerPrompt)
+        const plannerPrompt = `I am the user and my goal is to: ${goal}. \n\nMy business information is: ${JSON.stringify(brainData, null, 2)}\n\nMy current shared scratchpad is: ${JSON.stringify(sharedScratchpad, null, 2)}\n\nYour task is to create a plan with logical, sequential steps to achieve my goal. The plan should be a JSON array of objects, where each object has three keys: 'agent_id' (one of the following: ${validAgentIds}), 'task' (a specific, actionable instruction for that agent), and 'output_key' (a unique key to store the agent's response in the shared scratchpad). Do not include any text or explanation outside of the JSON object. You must include all the necessary information, such as the full prompt or question, within the 'task' key. Only use the available agent IDs. Here is an example of the format you must follow: ${fewShotExample}`;
 
         let plan;
         try {
-            const planSystemPrompt = getSystemPrompt(selectedAgent, {});
+            const planSystemPrompt = getSystemPrompt(selectedAgent, sharedScratchpad);
             const planResponse = await callGeminiAPI(planSystemPrompt, plannerPrompt);
 
             try {
                 plan = JSON.parse(planResponse);
             } catch (parseError) {
+                await saveMessage({ role: 'model', content: `Error: The Orchestrator's response was not valid JSON. Raw output: ${planResponse}`, timestamp: new Date() });
                 throw new Error(`Invalid JSON returned from model. Raw output: ${planResponse}`);
             }
 
-            await saveMessage({ ... });
+            await saveMessage({ role: 'model', content: `Orchestrator has created a plan with ${plan.steps.length} steps.`, timestamp: new Date() });
         } catch (e) {
             console.error("Failed to create plan:", e);
-            await saveMessage({ ... });
+            await saveMessage({ role: 'model', content: `Orchestrator failed to create a plan. Error: ${e.message}`, timestamp: new Date() });
             return;
         }
 
