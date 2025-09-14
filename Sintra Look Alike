@@ -85,18 +85,6 @@ const AGENT_CATEGORIES = [
     }
 ];
 
-const emptyBrain = { 
-    businessName: '', targetAudience: '', brandVoice: '', audiencePsychology: '', brandVoiceExamples: '', 
-    productsServices: '', usp: '', keywords: '', programCatalog: '', contentPillars: '', socialMediaTactics: '', emailMarketingGoal: '', newSubscriberOffer: '', seasonalPromotions: '', quarterlyContentThemes: '',
-    businessGoals: '', competitors: '', pricingStructure: '', businessGoalsQuantitative: '', competitiveAdvantage: '', customerJourney: '', longTermVision: '', biggestBusinessChallenges: '',
-    bookingConversionData: '', customerData: '', performanceMetrics: '',
-    websiteUrl: '', targetSearchCompetitors: '', contentStrategyFocus: '', businessLocation: '',
-    faq: '', refundPolicy: '', supportTone: '',
-    avgCostPerProgram: '', customerAcquisitionCost: '', monthlyFixedCosts: '',
-    teachingPhilosophy: '', customerProgressionPath: '', availableEquipment: '',
-    salesProcessOffers: '', negotiationParameters: ''
-};
-
 const emptyFirebaseConfig = {
   apiKey: "",
   authDomain: "",
